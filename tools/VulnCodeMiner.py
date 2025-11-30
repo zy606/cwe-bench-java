@@ -22,13 +22,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class IntegratedVulnMiner:
-    """
-    终极漏洞挖掘器
-    1. 动态搜索：解决 Buggy/Fixed 版本行号不一致问题。
-    2. NaN 清洗：解决 signature: NaN 问题。
-    3. 缺失标记：准确标记新增函数。
-    4. 单文件存储：批量结果存入一个 JSON。
-    """
     
     NVD_BASE_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
@@ -37,7 +30,6 @@ class IntegratedVulnMiner:
         self.project_csv = self.root / "data" / "project_info.csv"
         self.fix_info_csv = self.root / "data" / "fix_info.csv"
         
-        # 结果保存配置
         self.output_dir = Path("final_dataset")
         self.output_dir.mkdir(exist_ok=True)
         self.combined_file_path = self.output_dir / "all_cves_combined.json"
@@ -64,33 +56,20 @@ class IntegratedVulnMiner:
     # ================= 1. NVD 信息获取 =================
     def fetch_nvd_info(self, cve_id: str) -> Dict:
         cve_id = cve_id.strip().upper()
-        
-        empty_info = {
-            "description": "N/A",
-            "published_date": None,
-            "cvss_v3_score": None,
-            "severity": None
-        }
-
+        empty_info = {"description": "N/A", "published_date": None, "cvss_v3_score": None, "severity": None}
         try:
             time.sleep(self.nvd_delay)
             resp = self.session.get(self.NVD_BASE_URL, headers=self.headers, params={"cveId": cve_id}, timeout=30)
-            
             if resp.status_code == 200:
                 data = resp.json()
                 vulns = data.get("vulnerabilities", [])
                 if not vulns: return empty_info
-                
                 cve_item = vulns[0].get("cve", {})
-                
-                # 提取描述
                 desc = "No description"
                 for d in cve_item.get("descriptions", []):
                     if d.get("lang") == "en":
                         desc = d.get("value")
                         break
-                
-                # 提取评分
                 metrics = cve_item.get("metrics", {})
                 cvss_data = metrics.get("cvssMetricV31", [])
                 score = None
@@ -99,16 +78,8 @@ class IntegratedVulnMiner:
                     metric_data = cvss_data[0].get("cvssData", {})
                     score = metric_data.get("baseScore")
                     severity = metric_data.get("baseSeverity")
-
-                return {
-                    "description": desc,
-                    "published_date": cve_item.get("published"),
-                    "cvss_v3_score": score,
-                    "severity": severity
-                }
-        except Exception:
-            pass
-            
+                return {"description": desc, "published_date": cve_item.get("published"), "cvss_v3_score": score, "severity": severity}
+        except Exception: pass
         return empty_info
 
     # ================= 2. GitHub 代码下载 =================
@@ -117,9 +88,7 @@ class IntegratedVulnMiner:
         clean_url = github_url.rstrip("/").replace(".git", "")
         parts = clean_url.split("/")
         if len(parts) < 2: return []
-        
         raw_url = f"https://raw.githubusercontent.com/{parts[-2]}/{parts[-1]}/{commit_id}/{file_path}"
-        
         time.sleep(0.3)
         try:
             resp = self.session.get(raw_url, timeout=20)
@@ -128,34 +97,72 @@ class IntegratedVulnMiner:
         except: pass
         return []
 
-    # ================= 3. 动态搜索算法 (核心) =================
-    def _find_method_in_buggy_file(self, lines: List[str], method_name: str, hint_line: int) -> int:
+    # ================= 3. 核心算法: 签名加权搜索 =================
+    def _find_best_match_method(self, lines: List[str], method_name: str, signature: Optional[str], hint_line: int) -> int:
         """
-        在 Buggy 文件中搜索函数定义的起始行。
-        策略：优先在 hint (CSV提供的行号) 附近找，找不到则全文件搜。
+        在 Buggy 文件中寻找最佳匹配的函数起始行。
+        策略：
+        1. 找出所有包含 method_name 的定义行。
+        2. 如果有 signature，计算代码行与 signature 的关键词重合度 (Score)。
+        3. 如果 Score 相同，或者没有 signature，取距离 hint_line 最近的那个。
         """
-        # 搜索范围：hint 上下 100 行
-        start_search = max(0, hint_line - 100)
-        end_search = min(len(lines), hint_line + 100)
+        candidates = [] # 存储 (line_index, line_content)
         
-        def is_method_def(line, name):
-            # 简单启发式：包含名字 + 左括号 + 不是分号结尾(除非有大括号)
-            if name not in line: return False
-            if "(" not in line: return False
-            if ";" in line and "{" not in line: return False
-            return True
+        # 1. 扫描所有可能的候选行
+        for i, line in enumerate(lines):
+            line = line.strip()
+            # 初步过滤：必须包含方法名 + 左括号 + 不像是一行调用(以分号结尾且无大括号)
+            if method_name in line and "(" in line:
+                if ";" in line and "{" not in line:
+                    continue # 忽略抽象方法或接口定义
+                candidates.append(i)
+        
+        if not candidates:
+            return -1 # 没找到任何匹配
 
-        # 1. 局部搜索 (命中率高)
-        for i in range(start_search, end_search):
-            if is_method_def(lines[i], method_name):
-                return i
+        # 如果只有一个候选，直接返回
+        if len(candidates) == 1:
+            return candidates[0]
+
+        # === 2. 签名评分算法 (Disambiguation Logic) ===
+        best_candidate = -1
+        best_score = -1
+        min_distance = float('inf')
+
+        # 预处理 signature token (如果有)
+        sig_tokens = set()
+        if signature:
+            # 将 signature 拆分为单词集合，例如 "String retrieve(String, int)" -> {String, retrieve, int}
+            sig_tokens = set(re.split(r'\W+', signature))
+            sig_tokens.discard('') # 移除空串
+
+        for idx in candidates:
+            line_content = lines[idx]
+            current_score = 0
+            
+            # 计算评分：代码行中有多少个单词出现在了 signature 里
+            if signature:
+                line_tokens = set(re.split(r'\W+', line_content))
+                # 交集的大小即为得分
+                current_score = len(sig_tokens.intersection(line_tokens))
+            
+            # 计算距离：离 CSV 给的行号有多远
+            distance = abs(idx - hint_line)
+
+            # === 决策逻辑 ===
+            # 优先选 Score 高的 (匹配度高)
+            if current_score > best_score:
+                best_score = current_score
+                min_distance = distance
+                best_candidate = idx
+            
+            # 如果 Score 一样 (比如没有 signature，或者都匹配得很好)，选距离最近的
+            elif current_score == best_score:
+                if distance < min_distance:
+                    min_distance = distance
+                    best_candidate = idx
         
-        # 2. 全局搜索 (兜底)
-        for i in range(len(lines)):
-            if is_method_def(lines[i], method_name):
-                return i
-                
-        return -1 # 彻底没找到
+        return best_candidate
 
     def extract_code_snippets(self, project_slug: str, github_url: str, buggy_commit: str) -> List[Dict]:
         snippets = []
@@ -170,27 +177,20 @@ class IntegratedVulnMiner:
             method_name = row_fix['method']
             if pd.isna(method_name): method_name = "unknown"
 
-            # === [清洗] 处理 NaN 问题 (解决 signature: NaN) ===
-            raw_class = row_fix.get('class')
-            if pd.isna(raw_class):
-                class_name = Path(file_path).stem 
-            else:
-                class_name = str(raw_class).strip()
+            # 处理 NaN
+            class_name = row_fix.get('class')
+            if pd.isna(class_name): class_name = Path(file_path).stem 
+            else: class_name = str(class_name).strip()
 
             raw_sig = row_fix.get('signature')
-            if pd.isna(raw_sig):
-                signature = None # 显式设为 None，JSON 中为 null
-            else:
-                signature = str(raw_sig).strip()
-            # ===============================================
+            if pd.isna(raw_sig): signature = None 
+            else: signature = str(raw_sig).strip()
 
-            # 获取 CSV 里的行号作为“线索” (Hint)
             try:
                 hint_start = int(row_fix['method_start'])
                 csv_end = int(row_fix['method_end'])
             except: 
-                hint_start = 0
-                csv_end = 0
+                hint_start = 0; csv_end = 0
 
             # 1. 下载 Buggy 代码
             lines = self.fetch_github_lines(github_url, buggy_commit, file_path)
@@ -200,33 +200,24 @@ class IntegratedVulnMiner:
                 "class_name": class_name,
                 "method_name": method_name,
                 "signature": signature,
-                "lines_hint_csv": [hint_start, csv_end], # 仅作记录参考
+                "lines_hint_csv": [hint_start, csv_end],
             }
 
             if not lines:
-                base_info.update({
-                    "code": "",
-                    "is_missing_in_buggy_version": True,
-                    "status": "FILE_MISSING"
-                })
+                base_info.update({"code": "", "is_missing_in_buggy_version": True, "status": "FILE_MISSING"})
                 snippets.append(base_info)
                 continue
 
-            # 2. 动态搜索函数位置 (不依赖 CSV 行号)
-            # hint_start 是 1-based，转 0-based 需要 -1
-            found_idx = self._find_method_in_buggy_file(lines, method_name, hint_start - 1)
+            # 2. 【核心】使用新的加权搜索算法
+            # hint_start 是 1-based，转 0-based
+            found_idx = self._find_best_match_method(lines, method_name, signature, hint_start - 1)
 
             if found_idx == -1:
-                # 真的没找到 -> 说明是新增函数
-                base_info.update({
-                    "code": "",
-                    "is_missing_in_buggy_version": True,
-                    "status": "METHOD_MISSING"
-                })
+                base_info.update({"code": "", "is_missing_in_buggy_version": True, "status": "METHOD_MISSING"})
                 snippets.append(base_info)
                 continue
 
-            # 3. 从找到的头开始，向下寻找平衡的大括号
+            # 3. 向下寻找平衡的大括号 (完整提取)
             real_start_idx = found_idx
             real_end_idx = real_start_idx
             balance = 0
@@ -236,12 +227,9 @@ class IntegratedVulnMiner:
                 line = lines[i]
                 opens = line.count('{')
                 closes = line.count('}')
-                
                 if opens > 0: found_brace = True
                 balance += (opens - closes)
                 real_end_idx = i
-                
-                # 只要找到了起始大括号，且平衡归零，就结束
                 if found_brace and balance == 0:
                     break
             
@@ -249,32 +237,27 @@ class IntegratedVulnMiner:
             code_str = "".join(lines[real_start_idx:e_idx])
 
             # 4. 组装结果
-            base_info.update({
-                "code": code_str,
-                "is_missing_in_buggy_version": False,
-                "status": "FOUND",
-                "lines_extracted": [real_start_idx + 1, e_idx]
-            })
+            if not code_str.strip():
+                base_info.update({"code": "", "is_missing_in_buggy_version": True, "status": "EMPTY_BODY"})
+            else:
+                base_info.update({
+                    "code": code_str,
+                    "is_missing_in_buggy_version": False,
+                    "status": "FOUND",
+                    "lines_extracted": [real_start_idx + 1, e_idx]
+                })
             snippets.append(base_info)
             
         return snippets
 
-    # ================= 4. 数据生成逻辑 =================
+    # ================= 4. 数据生成与保存 =================
     def generate_single_cve_data(self, row_project) -> Optional[Dict]:
         cve_id = row_project['cve_id']
         project_slug = row_project['project_slug']
-        
-        # logger.info(f"正在处理: {cve_id}") # 减少日志刷屏
-        
         nvd_info = self.fetch_nvd_info(cve_id)
-        snippets = self.extract_code_snippets(
-            project_slug, 
-            row_project['github_url'], 
-            row_project['buggy_commit_id']
-        )
+        snippets = self.extract_code_snippets(project_slug, row_project['github_url'], row_project['buggy_commit_id'])
         
-        if not snippets and nvd_info['description'] == "N/A":
-            return None
+        if not snippets and nvd_info['description'] == "N/A": return None
 
         return {
             "cve_id": cve_id,
@@ -285,104 +268,65 @@ class IntegratedVulnMiner:
             "code_snippets": snippets
         }
 
-    # ================= 5. 运行模式 =================
     def run_interactive(self):
         print("\n--- 单个查询模式 ---")
         while True:
-            cve_input = input("\n请输入 CVE 号 (q 退出): ").strip().upper()
-            if cve_input == 'Q': break
-            
-            projects = self.df_project[self.df_project['cve_id'] == cve_input]
-            if projects.empty:
-                print("❌ 数据集中未找到该 CVE")
-                continue
-            
-            data = self.generate_single_cve_data(projects.iloc[0])
+            cve = input("\n请输入 CVE 号 (q 退出): ").strip().upper()
+            if cve == 'Q': break
+            projs = self.df_project[self.df_project['cve_id'] == cve]
+            if projs.empty: print("❌ 未找到"); continue
+            data = self.generate_single_cve_data(projs.iloc[0])
             if data:
-                # 交互模式单独存一个文件方便看
-                p = self.output_dir / f"debug_{cve_input}.json"
-                with open(p, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
-                print(f"✅ 提取成功: {p}")
-            else:
-                print("⚠️ 无效数据")
+                p = self.output_dir / f"debug_{cve}.json"
+                with open(p, "w", encoding="utf-8") as f: json.dump(data, f, indent=2, ensure_ascii=False)
+                print(f"✅ 保存: {p}")
+            else: print("⚠️ 无数据")
 
     def run_batch(self):
         total = len(self.df_project)
-        print(f"\n--- 批量全量处理 ---")
-        print(f"所有结果将存入: {self.combined_file_path}")
-        print("支持断点续传。")
-        
+        print(f"\n--- 批量处理 (Signature Enhanced) ---")
+        print(f"结果存入: {self.combined_file_path}")
         if input("确认开始? (y/n): ").lower() != 'y': return
 
-        # 断点续传逻辑
         all_data = []
-        processed_ids = set()
-        
+        processed = set()
         if self.combined_file_path.exists():
             try:
-                print("正在加载历史数据...")
                 with open(self.combined_file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    if content.strip():
-                        all_data = json.loads(content)
-                        processed_ids = {item['cve_id'] for item in all_data}
-                print(f"已加载 {len(all_data)} 条记录。")
-            except Exception as e:
-                logger.error(f"历史文件读取失败: {e}")
-                all_data = []
+                    all_data = json.load(f)
+                    processed = {x['cve_id'] for x in all_data}
+                print(f"加载历史: {len(all_data)}")
+            except: pass
 
-        success_count = 0
-        skip_count = 0
-
-        for index, row in self.df_project.iterrows():
-            cve_id = row['cve_id']
-            
-            if cve_id in processed_ids:
-                print(f"[{index + 1}/{total}] {cve_id} 跳过")
-                skip_count += 1
+        cnt = 0
+        for idx, row in self.df_project.iterrows():
+            cid = row['cve_id']
+            if cid in processed:
+                print(f"[{idx+1}/{total}] {cid} 跳过")
                 continue
-
-            print(f"[{index + 1}/{total}] {cve_id} ", end="")
-            
+            print(f"[{idx+1}/{total}] {cid} ", end="")
             try:
-                data = self.generate_single_cve_data(row)
-                if data:
-                    all_data.append(data)
-                    processed_ids.add(cve_id)
-                    success_count += 1
+                d = self.generate_single_cve_data(row)
+                if d:
+                    all_data.append(d)
+                    processed.add(cid)
+                    cnt += 1
                     print("✅")
-                else:
-                    print("⚠️ 空")
-
-                # 每5个保存一次
-                if success_count > 0 and success_count % 5 == 0:
+                else: print("⚠️")
+                if cnt > 0 and cnt % 5 == 0:
                     with open(self.combined_file_path, "w", encoding="utf-8") as f:
                         json.dump(all_data, f, indent=2, ensure_ascii=False)
-            
-            except Exception as e:
-                print(f"❌ {e}")
-                logger.error(f"Error {cve_id}: {e}")
-
-        # 最终保存
+            except Exception as e: print(f"❌ {e}")
+        
         with open(self.combined_file_path, "w", encoding="utf-8") as f:
             json.dump(all_data, f, indent=2, ensure_ascii=False)
-        
-        print("\n" + "="*30)
-        print(f"处理完成! 成功: {success_count}, 跳过: {skip_count}, 总计: {total}")
+        print("完成!")
 
 if __name__ == "__main__":
-    # === 用户配置 ===
     REPO_ROOT = r"D:\克隆仓库\cwe-bench-java"
     MY_API_KEY = "fb382a79-0bec-425e-b449-e0258468588f"
-    # ================
-
-    if not os.path.exists(REPO_ROOT):
-        print(f"❌ 路径不存在 {REPO_ROOT}")
-    else:
-        miner = IntegratedVulnMiner(REPO_ROOT, nvd_api_key=MY_API_KEY)
-        while True:
-            c = input("\n1.单查 / 2.批量 / q.退出: ").strip().lower()
-            if c == '1': miner.run_interactive()
-            elif c == '2': miner.run_batch()
-            elif c == 'q': break
+    if os.path.exists(REPO_ROOT):
+        miner = IntegratedVulnMiner(REPO_ROOT, MY_API_KEY)
+        c = input("\n1.单查 / 2.批量: ")
+        if c=='1': miner.run_interactive()
+        elif c=='2': miner.run_batch()

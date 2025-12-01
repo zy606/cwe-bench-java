@@ -2,6 +2,38 @@
 
 专为 [iris-sast/cwe-bench-java](https://github.com/iris-sast/cwe-bench-java) 数据集设计的漏洞数据挖掘工具。整合了 **NVD (National Vulnerability Database)** 的官方元数据和 **GitHub** 的历史代码快照，自动爬取 CVE 详情并提取存在漏洞的代码片段。
 
+## 📚 文档导航
+
+- **[配置指南](CONFIG.md)** - 详细配置说明、故障排除
+- **[JSON 结构](JSON_HIERARCHY.txt)** - 输出数据结构详细说明
+
+## 🚀 快速开始
+
+### 1. 安装依赖
+
+```bash
+pip install pandas requests
+```
+
+### 2. 配置环境
+
+```powershell
+# 复制配置文件
+copy tools\config\config.json.example tools\config\config.json
+
+# 编辑 tools\config\config.json，设置你的路径
+```
+
+### 3. 运行脚本
+
+```powershell
+# 运行漏洞代码提取器（推荐）
+python tools\Vulnerability_Code_Extractor.py
+
+# 或运行 NVD 数据抓取器
+python tools\NVD_Fetcher.py
+```
+
 ## 📁 目录结构
 
 ```
@@ -20,6 +52,7 @@ tools/
 │
 ├── 文档/
 │   └── docs/                             # 文档目录
+│       ├── README.md                     # 本文件（完整使用手册）
 │       ├── CONFIG.md                     # 详细配置指南
 │       └── JSON_HIERARCHY.txt            # JSON 数据结构说明
 │
@@ -88,7 +121,7 @@ $env:NVD_API_KEY = "your-api-key"
 
 如果脚本在项目根目录下运行，会自动检测路径（无需配置）。
 
-**详细配置说明请参考：[配置指南](docs/CONFIG.md)**
+**详细配置说明请参考：[配置指南](CONFIG.md)**
 
 ## 🖥️ 使用指南
 
@@ -257,7 +290,7 @@ python tools\config\test_config.py
 
 ---
 
-## 📋 脚本对比
+## 📋 核心脚本对比
 
 | 脚本 | 推荐度 | 主要功能 | 输出目录 | 特点 |
 |------|--------|----------|----------|------|
@@ -307,7 +340,7 @@ python tools\config\test_config.py
 ]
 ```
 
-**详细结构说明请参考：[JSON_HIERARCHY.txt](docs/JSON_HIERARCHY.txt)**
+**详细结构说明请参考：[JSON_HIERARCHY.txt](JSON_HIERARCHY.txt)**
 
 ## 🔍 状态码说明
 
@@ -363,11 +396,6 @@ python tools\config\test_config.py
 - 配置加载情况
 
 **注意**：日志文件会持续追加，建议定期清理或归档。
-
-## 📚 相关文档
-
-- **[配置指南](docs/CONFIG.md)** - 详细配置说明、故障排除
-- **[JSON 结构](docs/JSON_HIERARCHY.txt)** - 输出数据结构详细说明
 
 ## 🤝 致谢
 

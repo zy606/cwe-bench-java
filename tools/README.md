@@ -43,16 +43,6 @@ python tools\NVD_Fetcher.py
 | **VulnCodeMiner.py** | 漏洞代码提取 + NVD 元数据（旧版本） | `output/vulnerability_code_legacy/` |
 | **NVD_Fetcher.py** | 仅 NVD 数据抓取 | `output/nvd_data/` |
 
-## 📖 详细文档
-
-**查看完整使用手册**：[docs/README.md](docs/README.md)
-
-包含：
-- 各脚本详细使用方式
-- 交互模式和批量模式说明
-- 输出文件说明
-- 脚本对比和使用建议
-
 ## ⚙️ 配置方式
 
 支持三种配置方式（优先级从高到低）：
@@ -62,9 +52,18 @@ python tools\NVD_Fetcher.py
 
 **详细配置说明**：[docs/CONFIG.md](docs/CONFIG.md)
 
+## 📖 查看完整文档
+
+**查看完整使用手册**：[docs/README.md](docs/README.md)
+
+包含：
+- 各脚本详细使用方式
+- 交互模式和批量模式说明
+- 输出文件说明
+- 脚本对比和使用建议
+
 ## 🤝 致谢
 
 本工具基于 [iris-sast/cwe-bench-java](https://github.com/iris-sast/cwe-bench-java) 数据集构建。
 
 **License**: MIT
-

@@ -2,6 +2,7 @@ import requests
 import time
 import json
 import logging
+import os
 import pandas as pd
 from typing import Dict, Optional
 from pathlib import Path
@@ -10,8 +11,10 @@ from urllib3.util.retry import Retry
 
 # ================= 配置日志系统 =================
 # 设置日志级别为 INFO，并在每条日志前加上时间戳，方便排查网络超时或报错发生的时间
-# 创建日志目录
-log_dir = Path("output/logs")
+# 获取脚本所在目录（tools 目录）
+TOOLS_DIR = Path(__file__).parent
+# 创建日志目录（确保在 tools 目录下）
+log_dir = TOOLS_DIR / "output" / "logs"
 log_dir.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -264,7 +267,6 @@ if __name__ == "__main__":
         from config import get_repo_root, get_nvd_api_key
     except ImportError:
         # 如果 config.py 不存在，使用自动检测
-        import os
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)
         if os.path.exists(os.path.join(parent_dir, "data", "project_info.csv")):
@@ -290,8 +292,8 @@ if __name__ == "__main__":
         print(f"❌ CSV 文件不存在: {LOCAL_CSV_PATH}")
         exit(1)
     
-    # 结果保存文件夹名称
-    SAVE_DIR = "output/nvd_data"
+    # 结果保存文件夹（确保在 tools 目录下）
+    SAVE_DIR = str(TOOLS_DIR / "output" / "nvd_data")
 
     # 初始化抓取器
     fetcher = NVDFetcher(api_key=MY_API_KEY)
@@ -327,7 +329,7 @@ if __name__ == "__main__":
             print("\n批量处理结束。")
 
         elif choice == '3':
-            print("\n正在扫描 output/nvd_data 目录并生成汇总 CSV...")
+            print(f"\n正在扫描 {SAVE_DIR} 目录并生成汇总 CSV...")
             fetcher.merge_results(Path(SAVE_DIR))
             print("完成。")
         

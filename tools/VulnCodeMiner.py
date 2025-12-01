@@ -11,8 +11,10 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ================= 配置日志系统 =================
-# 创建日志目录
-log_dir = Path("output/logs")
+# 获取脚本所在目录（tools 目录）
+TOOLS_DIR = Path(__file__).parent
+# 创建日志目录（确保在 tools 目录下）
+log_dir = TOOLS_DIR / "output" / "logs"
 log_dir.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -34,7 +36,8 @@ class IntegratedVulnMiner:
         self.project_csv = self.root / "data" / "project_info.csv"
         self.fix_info_csv = self.root / "data" / "fix_info.csv"
         
-        self.output_dir = Path("output/vulnerability_code_legacy")
+        # 结果保存配置（确保在 tools 目录下）
+        self.output_dir = TOOLS_DIR / "output" / "vulnerability_code_legacy"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.combined_file_path = self.output_dir / "all_cves_combined.json"
 

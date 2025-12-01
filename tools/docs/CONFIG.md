@@ -119,8 +119,15 @@ python tools\Vulnerability_Code_Extractor.py
 │   └── fix_info.csv
 ├── tools/
 │   ├── config.py          # 配置模块
-│   ├── config.json        # 个人配置文件（不提交到 Git）
-│   ├── config.json.example # 配置示例（提交到 Git）
+│   ├── config/            # 配置目录
+│   │   ├── config.json.example # 配置示例（提交到 Git）
+│   │   ├── config.json    # 个人配置文件（不提交到 Git）
+│   │   └── test_config.py # 配置测试脚本
+│   ├── output/            # 输出目录（不提交到 Git）
+│   │   ├── vulnerability_code/
+│   │   ├── vulnerability_code_legacy/
+│   │   ├── nvd_data/
+│   │   └── logs/
 │   └── *.py               # 脚本文件
 └── ...
 ```
@@ -165,7 +172,10 @@ ImportError: No module named 'config'
 ## 常见问题
 
 **Q: 配置文件在哪里？**  
-A: 在 `tools/config` 目录下。如果不存在，运行 `copy tools\config\config.json.example tools\config\config.json`
+A: 在 `tools/config/` 目录下。如果不存在，运行：
+```powershell
+copy tools\config\config.json.example tools\config\config.json
+```
 
 **Q: 路径应该怎么写？**  
 A: 支持两种格式：`D:\CVE\cwe-bench-java1` 或 `D:/CVE/cwe-bench-java1`（推荐使用 `/`）

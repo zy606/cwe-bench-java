@@ -1,0 +1,108 @@
+漏洞代码 JSON 数据结构层次
+========================================
+
+【顶层】JSON 数组
+│
+└─ 【第1层】CVE 漏洞记录对象
+   │
+   ├─ cve_id (string)                    # CVE编号
+   ├─ project_slug (string)              # 项目标识
+   ├─ buggy_commit_id (string)           # 漏洞版本Commit ID
+   ├─ github_url (string)                # GitHub仓库URL
+   │
+   ├─ 【第2层】nvd_metadata (object)     # NVD官方元数据
+   │   ├─ description (string)           # 漏洞描述
+   │   ├─ published_date (string|null)  # 发布日期
+   │   ├─ cvss_v3_score (number|null)   # CVSS评分
+   │   └─ severity (string|null)        # 严重程度
+   │
+   └─ 【第2层】code_snippets (array)     # 代码片段数组
+       │
+       └─ 【第3层】代码片段对象 (object)
+           ├─ file_path (string)                    # 文件路径
+           ├─ class_name (string)                   # 类名
+           ├─ method_name (string)                  # 方法名
+           ├─ signature (string|null)               # 方法签名
+           ├─ lines_hint_csv (array[2])            # CSV提示行号
+           ├─ code (string)                        # 提取的代码
+           ├─ status (string)                       # 提取状态
+           ├─ lines_extracted (array[2]|undefined)  # 实际提取行号
+           └─ is_missing_in_buggy_version (boolean) # 是否缺失
+
+
+详细字段说明
+========================================
+
+【CVE记录层】
+├─ cve_id: "CVE-2019-10086"
+├─ project_slug: "apache/commons-beanutils"
+├─ buggy_commit_id: "9426f0a1b2c3..."
+└─ github_url: "https://github.com/..."
+
+【NVD元数据层】
+├─ description: "漏洞描述文本..."
+├─ published_date: "2019-08-20T21:15:00.000" | null
+├─ cvss_v3_score: 9.8 | null
+└─ severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "NONE" | null
+
+【代码片段层】
+├─ file_path: "src/main/java/.../X.java"
+├─ class_name: "ClassName"
+├─ method_name: "methodName"
+├─ signature: "ReturnType methodName(Type1, Type2)" | null
+├─ lines_hint_csv: [start_line, end_line]  # 1-based
+├─ code: "完整方法代码字符串\n包含换行符"
+├─ status: "FOUND" | "FILE_MISSING" | "METHOD_MISSING" | "EMPTY_BODY"
+├─ lines_extracted: [start_line, end_line]  # 仅当status="FOUND"时存在
+└─ is_missing_in_buggy_version: true | false
+
+
+状态码含义
+========================================
+
+FOUND            → 成功提取代码
+FILE_MISSING     → 文件无法下载
+METHOD_MISSING   → 方法在文件中不存在
+EMPTY_BODY       → 方法体为空或解析失败
+
+
+数据生成来源
+========================================
+
+1. project_info.csv → cve_id, project_slug, buggy_commit_id, github_url
+2. fix_info.csv → file_path, method_name, signature, lines_hint_csv
+3. NVD API → nvd_metadata (description, published_date, cvss_v3_score, severity)
+4. GitHub Raw → code (通过签名加权搜索算法提取)
+
+
+JSON 示例（最小化）
+========================================
+
+[
+  {
+    "cve_id": "CVE-2019-10086",
+    "project_slug": "apache/commons-beanutils",
+    "buggy_commit_id": "9426f0...",
+    "github_url": "https://github.com/...",
+    "nvd_metadata": {
+      "description": "...",
+      "published_date": "2019-08-20T21:15:00.000",
+      "cvss_v3_score": 9.8,
+      "severity": "CRITICAL"
+    },
+    "code_snippets": [
+      {
+        "file_path": "src/.../X.java",
+        "class_name": "X",
+        "method_name": "method",
+        "signature": "Type method(Type)",
+        "lines_hint_csv": [10, 20],
+        "code": "public Type method(Type t) {\n  ...\n}",
+        "status": "FOUND",
+        "lines_extracted": [12, 22],
+        "is_missing_in_buggy_version": false
+      }
+    ]
+  }
+]
+

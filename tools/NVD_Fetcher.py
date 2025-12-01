@@ -10,7 +10,18 @@ from urllib3.util.retry import Retry
 
 # ================= 配置日志系统 =================
 # 设置日志级别为 INFO，并在每条日志前加上时间戳，方便排查网络超时或报错发生的时间
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 创建日志目录
+log_dir = Path("output/logs")
+log_dir.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_dir / "nvd_fetcher.log", encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 class NVDFetcher:
@@ -248,15 +259,39 @@ class NVDFetcher:
 
 # ================= 主程序入口 =================
 if __name__ == "__main__":
-    # --- 用户配置区域 (请修改这里) ---
-    # 1. 你的 API Key
-    MY_API_KEY = "fb382a79-0bec-425e-b449-e0258468588f"
+    # === 使用统一配置模块 ===
+    try:
+        from config import get_repo_root, get_nvd_api_key
+    except ImportError:
+        # 如果 config.py 不存在，使用自动检测
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        if os.path.exists(os.path.join(parent_dir, "data", "project_info.csv")):
+            REPO_ROOT = parent_dir
+        else:
+            REPO_ROOT = None
+        MY_API_KEY = None
+    else:
+        REPO_ROOT = get_repo_root()
+        MY_API_KEY = get_nvd_api_key()
     
-    # 2. 你的本地 CSV 路径 (使用 r"" 防止反斜杠转义)
-    LOCAL_CSV_PATH = r"D:\克隆仓库\cwe-bench-java\data\project_info.csv"
+    if not REPO_ROOT or not os.path.exists(REPO_ROOT):
+        print(f"❌ 路径不存在或未配置: {REPO_ROOT}")
+        print("\n请使用以下方式之一配置项目根路径：")
+        print("  1. 设置环境变量: CWE_BENCH_JAVA_ROOT")
+        print("  2. 创建 tools/config.json 文件，设置 repo_root")
+        print("  3. 运行 python tools/config.py 创建配置模板")
+        exit(1)
     
-    # 3. 结果保存文件夹名称
-    SAVE_DIR = "nvd_results"
+    # 使用相对路径拼接
+    LOCAL_CSV_PATH = os.path.join(REPO_ROOT, "data", "project_info.csv")
+    if not os.path.exists(LOCAL_CSV_PATH):
+        print(f"❌ CSV 文件不存在: {LOCAL_CSV_PATH}")
+        exit(1)
+    
+    # 结果保存文件夹名称
+    SAVE_DIR = "output/nvd_data"
 
     # 初始化抓取器
     fetcher = NVDFetcher(api_key=MY_API_KEY)
@@ -292,7 +327,7 @@ if __name__ == "__main__":
             print("\n批量处理结束。")
 
         elif choice == '3':
-            print("\n正在扫描 nvd_results 目录并生成汇总 CSV...")
+            print("\n正在扫描 output/nvd_data 目录并生成汇总 CSV...")
             fetcher.merge_results(Path(SAVE_DIR))
             print("完成。")
         

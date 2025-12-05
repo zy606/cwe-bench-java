@@ -3,3 +3,10 @@ __pycache__
 
 project-sources
 build-info
+
+# Analyze 模块输出（由 analyze/.gitignore 处理，这里作为备份）
+analyze/output/
+analyze/*.log
+
+# z.try output directory
+z.try/output/

@@ -10,3 +10,8 @@ analyze/*.log
 
 # z.try output directory
 z.try/output/
+
+# necessary_condition_analyze outputs
+
+neccessary_condition_analyze.py/silicon_analysis_results.json
+neccessary_condition_analyze.py/silicon_cwe_rules.json

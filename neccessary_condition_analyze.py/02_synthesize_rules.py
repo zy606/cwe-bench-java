@@ -1,110 +1,130 @@
 import json
 import os
-os.environ["http_proxy"] = "http://127.0.0.1:7897"
-os.environ["https_proxy"] = "http://127.0.0.1:7897"
-import re
 import time
-import google.generativeai as genai
+from openai import OpenAI
 from collections import defaultdict
 from tqdm import tqdm
 
 # ================= 配置区域 =================
-# 1. 代理
+# 1. 代理 (建议注释)
+# os.environ["http_proxy"] = "http://127.0.0.1:7897"
+# os.environ["https_proxy"] = "http://127.0.0.1:7897"
 
+# 2. 路径 (读取脚本 1 的输出)
+INPUT_RESULTS_PATH = r"D:\CVE\cwe-bench-java1\neccessary_condition_analyze.py\silicon_analysis_results.json"
+FINAL_RULES_PATH = r"D:\CVE\cwe-bench-java1\neccessary_condition_analyze.py\silicon_cwe_rules.json"
 
-# 2. 路径
-INPUT_RESULTS_PATH = r"D:\CVE\cwe-bench-java1\neccessary_condition_analyze.py\gemini_analysis_results.json"
-FINAL_RULES_PATH = r"D:\CVE\cwe-bench-java1\neccessary_condition_analyze.py\cwe_synthesis_rules.json"
-
-# 3. API
-API_KEY = "AIzaSyBWtDjtTNHAeqxqvD_suvjym3Te9cxH48I"
-MODEL_NAME = "gemini-2.5-flash"
+# 3. API 配置
+API_KEY = "sk-jhbidcgagdiogevbjgqkxkhqudyjcwltoiatzseuszpahuzu"
+BASE_URL = "https://api.siliconflow.cn/v1"
+MODEL_NAME = "deepseek-ai/DeepSeek-V3"
 # ===========================================
 
-def clean_and_parse_json(text):
-    text = re.sub(r'^```json\s*', '', text, flags=re.MULTILINE)
-    text = re.sub(r'\s*```$', '', text, flags=re.MULTILINE).strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        try:
-            return json.loads(text.replace('\\', '\\\\'))
-        except:
-            return None
+def extract_json_content(text):
+    """鲁棒的 JSON 提取"""
+    if not text: return None
+    text = text.strip()
+    start_idx = text.find('{')
+    end_idx = text.rfind('}')
+    if start_idx == -1 or end_idx == -1: return None
+    return text[start_idx : end_idx + 1]
 
-def synthesize_cwe_rules():
-    print(f"--- 启动择优归纳: {MODEL_NAME} ---")
-
+def synthesize():
+    print(f"--- 启动归纳总结 (Model: {MODEL_NAME}) ---")
+    
     if not os.path.exists(INPUT_RESULTS_PATH):
-        print(f"[!] 输入文件不存在")
+        print("[!] 请先运行脚本 1 生成分析结果")
         return
 
     with open(INPUT_RESULTS_PATH, 'r', encoding='utf-8') as f:
-        raw_results = json.load(f)
+        raw_data = json.load(f)
 
-    # 1. 分组并过滤 (关键步骤：只保留高质量样本)
+    # 1. 过滤与分组
     cwe_groups = defaultdict(list)
-    for item in raw_results:
+    valid_count = 0
+    
+    for item in raw_data:
         analysis = item.get("analysis", {})
-        if analysis.get("status") == "error": continue
+        qa = analysis.get("Quality_Assessment", {})
+        is_classic = qa.get("is_classic", False)
         
-        # 质量检查
-        quality = analysis.get("Quality_Assessment", {})
-        # 策略：必须是经典案例，或者置信度大于7
-        if not quality.get("is_classic", False) and quality.get("confidence", 0) < 7:
+        # 过滤策略：只保留经典样本，或者置信度 > 7 的样本
+        # 丢弃分析失败或置信度太低的噪音数据
+        if analysis.get("status") == "error" or (not is_classic and qa.get("confidence", 0) <= 7):
             continue
             
-        cwe_id = analysis.get("Inferred_CWE", "Unknown")
-        if cwe_id and "CWE-" in cwe_id:
-            base_cwe = cwe_id.split(":")[0].strip().split(" ")[0]
+        cwe = analysis.get("Inferred_CWE", "Unknown")
+        if "CWE-" in cwe:
+            # 简单清洗 CWE ID (例如 "CWE-22: Path Traversal" -> "CWE-22")
+            base_cwe = cwe.split(":")[0].strip().split(" ")[0]
             cwe_groups[base_cwe].append(item)
+            valid_count += 1
 
-    print(f"经过过滤，剩余 {len(cwe_groups)} 个有效 CWE 类别用于归纳。")
-
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel(model_name=MODEL_NAME, generation_config={"response_mime_type": "application/json"})
-    final_rules = []
+    print(f"[+] 过滤后有效样本: {valid_count} 条，覆盖 {len(cwe_groups)} 个 CWE 类别")
 
     # 2. 归纳
+    client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
+    final_rules = []
+
     for cwe_id, items in tqdm(cwe_groups.items(), desc="Synthesizing"):
         if len(items) == 0: continue
-
-        # 按置信度排序，取前10个最好的
+        
+        # 排序取前 15 个置信度最高的样本作为证据
         items.sort(key=lambda x: x['analysis'].get('Quality_Assessment', {}).get('confidence', 0), reverse=True)
-        top_items = items[:10]
-
+        top_items = items[:15]
+        
         evidence = "\n".join([f"- {i['analysis'].get('Missing_Condition')}" for i in top_items])
+
+        system_prompt = "You are a theoretical computer science expert. Output valid JSON only."
         
-        prompt = f"""
-        You are a security theorist. Based on these {len(top_items)} high-quality "Classic" vulnerability samples for {cwe_id}, strictly deduce the Abstract Necessary Conditions.
+        user_prompt = f"""
+        Synthesize a logical failure formula for {cwe_id} based on these high-confidence samples.
         
-        Samples (Missing Conditions):
+        SAMPLES (Missing Logic):
         {evidence}
         
-        Task:
-        Synthesize a logical formula. DO NOT describe the code. Describe the LOGIC constraints.
+        TASK:
+        Create a logical formula: "IF (Condition A) AND (Condition B) -> Vulnerability".
+        Describe the root cause pattern abstractly.
         
-        Output JSON (No backslashes):
+        OUTPUT FORMAT (JSON):
         {{
             "cwe_id": "{cwe_id}",
-            "definition": "...",
-            "necessary_condition_formula": "IF (Input reaches sink) AND (Validation X is missing) -> Vulnerability",
-            "root_cause_pattern": "..."
+            "definition": "string",
+            "necessary_condition_formula": "string",
+            "preventative_principle": "string"
         }}
         """
         
         try:
-            response = model.generate_content(prompt)
-            rule = clean_and_parse_json(response.text)
-            if rule: final_rules.append(rule)
-            time.sleep(2)
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1
+            )
+            
+            content = response.choices[0].message.content
+            # 使用提取函数防止格式错误
+            cleaned_content = extract_json_content(content)
+            
+            if cleaned_content:
+                final_rules.append(json.loads(cleaned_content))
+            
+            time.sleep(1) 
+            
         except Exception as e:
             tqdm.write(f"[!] Error {cwe_id}: {e}")
 
+    # 保存最终规则
+    os.makedirs(os.path.dirname(FINAL_RULES_PATH), exist_ok=True)
     with open(FINAL_RULES_PATH, 'w', encoding='utf-8') as f:
         json.dump(final_rules, f, indent=2, ensure_ascii=False)
     
     print(f"\n[√] 归纳完成: {FINAL_RULES_PATH}")
 
 if __name__ == "__main__":
-    synthesize_cwe_rules()
+    synthesize()

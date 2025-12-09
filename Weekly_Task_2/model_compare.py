@@ -59,12 +59,12 @@ def select_best_snippet(cve_item):
 current_dir = os.path.dirname(os.path.abspath(__file__))
 json_path = os.path.join(current_dir, 'final_dataset', 'all_cves_combined.json')
 
-print(f"📂 读取数据: {json_path}")
+print(f" 读取数据: {json_path}")
 try:
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 except Exception as e:
-    print(f"❌ 读取失败: {e}")
+    print(f" 读取失败: {e}")
     exit()
 
 # 数据清洗
@@ -76,10 +76,10 @@ for item in data:
         valid_cves.append(item)
 
 if not valid_cves:
-    print("❌ 数据集为空！")
+    print(" 数据集为空！")
     exit()
 
-print(f"✅ 有效样本数: {len(valid_cves)}")
+print(f" 有效样本数: {len(valid_cves)}")
 
 # 4. 加载模型
 print("\n 正在加载模型群...")
@@ -179,7 +179,7 @@ def print_stats(name, r_list):
     print(f"{name:<20} | {avg:<15.2f} | {mrr:<15.2f}")
 
 print("-" * 75)
-print("\n📊 最终结果:")
+print("\n 最终结果:")
 print(f"{'Model Configuration':<20} | {'Avg Rank (↓)':<15} | {'MRR (↑)':<15}")
 print("-" * 55)
 print_stats("Baseline (MiniLM)", ranks['base'])

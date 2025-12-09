@@ -5,10 +5,10 @@ import re
 import torch
 from sentence_transformers import CrossEncoder
 
-# 1. 设置环境变量 (如果需要)
+# 1. 设置环境变量
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
-# 推荐使用 BGE-Reranker-v2-m3，支持多语言和代码，且支持 8192 长度
+# 使用 BGE-Reranker-v2-m3，支持多语言和代码，且支持 8192 长度
 MODEL_NAME = 'BAAI/bge-reranker-v2-m3' 
 # 如果显存不够 (小于 8G)，可以改用 'BAAI/bge-reranker-base'
 DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'final_dataset', 'all_cves_combined.json')
@@ -42,7 +42,7 @@ def select_best_snippet(cve_item):
     # 增加无意义代码的过滤
     generic_keywords = ["dummy", "test", "demo", "example", "setup", "teardown"]
 
-    print(f"\n🕵️‍♂️ 正在从 {len(snippets)} 个片段中筛选 Ground Truth...")
+    print(f"\n 正在从 {len(snippets)} 个片段中筛选 Ground Truth...")
 
     for s in snippets:
         raw_code = s.get('code', '')
@@ -53,7 +53,7 @@ def select_best_snippet(cve_item):
         m_name_lower = method_name.lower()
         score = 0
         
-        # 规则 1: 描述中直接包含了函数名 (最强特征)
+        # 规则 1: 描述中直接包含了函数名
         # 例如描述: "Vulnerability in doSomething function..."
         if m_name_lower in description and len(m_name_lower) > 3:
             score += 20
@@ -93,12 +93,12 @@ def select_best_snippet(cve_item):
 
 # 主程序
 
-print(f"📂 正在读取数据: {DATA_PATH}")
+print(f" 正在读取数据: {DATA_PATH}")
 try:
     with open(DATA_PATH, 'r', encoding='utf-8') as f:
         data = json.load(f)
 except FileNotFoundError:
-    print(f"❌ 错误：找不到文件。")
+    print(f" 错误：找不到文件。")
     exit()
 
 # 数据预处理
@@ -113,13 +113,13 @@ for item in data:
         valid_cves.append(item)
 
 if not valid_cves:
-    print("❌ 数据集为空！")
+    print(" 数据集为空！")
     exit()
 
-print(f"✅ 数据加载完成，共有 {len(valid_cves)} 个有效 CVE 样本。")
+print(f" 数据加载完成，共有 {len(valid_cves)} 个有效 CVE 样本。")
 
 # 加载模型
-print(f"🤖 正在加载 Rank 模型: {MODEL_NAME} ... ")
+print(f" 正在加载 Rank 模型: {MODEL_NAME} ... ")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # BGE-Reranker 使用 CrossEncoder 接口加载时需要注意：
@@ -135,7 +135,7 @@ model = CrossEncoder(
 while True:
     print("\n" + "="*80)
     print("可用 CVE 示例: " + ", ".join([x['cve_id'] for x in valid_cves[:5]]) + " ...")
-    user_input = input("👉 请输入目标 CVE 编号 (输入 q 退出, r 随机): ").strip().upper()
+    user_input = input(" 请输入目标 CVE 编号 (输入 q 退出, r 随机): ").strip().upper()
     
     if user_input == 'Q':
         break
@@ -146,7 +146,7 @@ while True:
         target_sample = next((item for item in valid_cves if item["cve_id"] == user_input), None)
     
     if not target_sample:
-        print(f"❌ 未找到 {user_input}。")
+        print(f" 未找到 {user_input}。")
         continue
 
     # 准备数据
@@ -190,7 +190,7 @@ while True:
     # 构造模型输入对 (Query, Document)
     model_inputs = [[description, item['code']] for item in candidates]
     
-    print(f"⏳ 正在计算语义相似度 (使用 {device})...")
+    print(f" 正在计算语义相似度 (使用 {device})...")
     scores = model.predict(model_inputs)
     
     # 归一化分数 (Sigmoid)，方便阅读 (BGE 输出是 logits，范围可能是负无穷到正无穷)
@@ -216,8 +216,8 @@ while True:
 
     print("-" * 70)
     if found_rank == 1:
-        print(f"🎉 完美匹配！Ground Truth 排在第 1 位。")
+        print(f" 完美匹配！Ground Truth 排在第 1 位。")
     elif found_rank <= 3:
-        print(f"👌 效果尚可。Ground Truth 排在第 {found_rank} 位。")
+        print(f" 效果尚可。Ground Truth 排在第 {found_rank} 位。")
     else:
-        print(f"⚠️ 效果不佳。Ground Truth 排在第 {found_rank} 位。可能代码与描述的语义差距过大。")
+        print(f" 效果不佳。Ground Truth 排在第 {found_rank} 位。可能代码与描述的语义差距过大。")

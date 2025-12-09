@@ -10,6 +10,7 @@ analyze/*.log
 
 # z.try output directory
 z.try/output/
+z.try/output1/
 
 # necessary_condition_analyze outputs
 
